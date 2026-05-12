@@ -20,10 +20,10 @@ function initChat(bookingId, currentUserId) {
         </button>
     `;
     document.body.insertAdjacentHTML('beforeend', chatHtml);
-    
+
     // Start polling
     startChatPolling(bookingId, currentUserId);
-    
+
     // Handle Enter key
     document.addEventListener('keypress', (e) => {
         if (e.key === 'Enter' && document.activeElement.id === 'chatInput') {
@@ -48,7 +48,7 @@ async function startChatPolling(bookingId, currentUserId) {
     chatPollInterval = setInterval(async () => {
         const response = await fetch(`/GetafeGRAB/rider/api/chat/get.php?booking_id=${bookingId}`);
         const result = await response.json();
-        
+
         if (result.success) {
             if (result.messages.length > lastMessageCount) {
                 renderMessages(result.messages, currentUserId);
@@ -70,7 +70,7 @@ function renderMessages(messages, currentUserId) {
         msgDiv.className = `message ${isMe ? 'me' : 'them'}`;
         msgDiv.innerHTML = `
             <div class="msg-bubble">${m.message}</div>
-            <div class="msg-time">${new Date(m.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+            <div class="msg-time">${new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
         `;
         container.appendChild(msgDiv);
     });
@@ -81,17 +81,17 @@ async function sendMessage(bookingId, currentUserId) {
     const input = document.getElementById('chatInput');
     const message = input.value.trim();
     if (!message) return;
-    
+
     input.value = '';
     const formData = new FormData();
     formData.append('booking_id', bookingId);
     formData.append('message', message);
-    
+
     const response = await fetch('/GetafeGRAB/rider/api/chat/send.php', {
         method: 'POST',
         body: formData
     });
-    
+
     const result = await response.json();
     if (!result.success) {
         alert('Failed to send message');

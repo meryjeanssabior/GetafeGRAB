@@ -232,21 +232,28 @@ function startStatusPolling() {
                     if (typeof initChat === 'function' && !document.getElementById('chatWindow')) {
                         initChat(b.id, currentUserId);
                     }
+                    // Start real-time driver tracking
+                    startDriverTracking();
                 } else if (b.status === 'in_progress') {
                     btn.innerText = "Trip in Progress...";
                     btn.style.background = "linear-gradient(90deg, #2d3436, #000)";
+                    // Continue tracking during trip
+                    startDriverTracking();
                 } else if (b.status === 'completed') {
                     clearInterval(poll);
+                    stopDriverTracking();
                     alert('Trip completed! Thank you for riding with GetafeGRAB.');
                     window.location.reload();
                 } else if (b.status === 'pending') {
                     btn.innerText = "Waiting for Driver...";
                 } else if (b.status === 'cancelled') {
                     clearInterval(poll);
+                    stopDriverTracking();
                     window.location.reload();
                 }
             } else {
                 clearInterval(poll);
+                stopDriverTracking();
                 btn.innerText = "Find a Driver";
                 btn.disabled = false;
                 btn.style.background = "";
@@ -354,6 +361,356 @@ async function checkActiveRide() {
         if ((b.status === 'accepted' || b.status === 'in_progress') && typeof initChat === 'function') {
             initChat(b.id, currentUserId);
         }
+        // Start real-time tracking if ride is active
+        if (b.status === 'accepted' || b.status === 'in_progress') {
+            startDriverTracking();
+        }
     }
 }
 checkActiveRide();
+
+// ===== Real-Time Driver Tracking on Rider Map =====
+let driverTrackingMarker = null;
+let driverRouteLine = null;
+let driverTrackingInterval = null;
+let trackingInfoPanel = null;
+let driverPulseCircle = null;
+let lastDriverLatLng = null;
+let animationFrame = null;
+
+const driverTrackingIcon = L.divIcon({
+    className: 'driver-tracking-icon',
+    html: `
+        <div class="driver-marker-container">
+            <div class="driver-marker-pulse"></div>
+            <div class="driver-marker-dot">
+                <i class="fas fa-motorcycle"></i>
+            </div>
+        </div>
+    `,
+    iconSize: [50, 50],
+    iconAnchor: [25, 25]
+});
+
+// Inject tracking CSS
+(function injectTrackingStyles() {
+    const style = document.createElement('style');
+    style.textContent = `
+        .driver-tracking-icon {
+            background: none !important;
+            border: none !important;
+        }
+        .driver-marker-container {
+            position: relative;
+            width: 50px;
+            height: 50px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .driver-marker-pulse {
+            position: absolute;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: rgba(249, 212, 35, 0.25);
+            animation: driverPulse 2s ease-out infinite;
+        }
+        .driver-marker-dot {
+            position: relative;
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #f9d423, #ff4e50);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 15px rgba(249, 212, 35, 0.5), 0 0 30px rgba(249, 212, 35, 0.2);
+            z-index: 2;
+        }
+        .driver-marker-dot i {
+            color: #1a1a1a;
+            font-size: 16px;
+        }
+        @keyframes driverPulse {
+            0% { transform: scale(0.8); opacity: 1; }
+            100% { transform: scale(2.2); opacity: 0; }
+        }
+
+        .tracking-info-panel {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 2000;
+            background: rgba(26, 26, 26, 0.95);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(249, 212, 35, 0.2);
+            border-radius: 20px;
+            padding: 16px 24px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5), 0 0 20px rgba(249, 212, 35, 0.08);
+            animation: slideUpFade 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+            min-width: 380px;
+        }
+        @keyframes slideUpFade {
+            from { transform: translateX(-50%) translateY(30px); opacity: 0; }
+            to { transform: translateX(-50%) translateY(0); opacity: 1; }
+        }
+        .tracking-avatar {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #f9d423, #ff4e50);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .tracking-avatar i {
+            color: #1a1a1a;
+            font-size: 18px;
+        }
+        .tracking-details {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            flex: 1;
+        }
+        .tracking-driver-name {
+            font-weight: 700;
+            font-size: 0.95rem;
+            color: #fff;
+        }
+        .tracking-status-label {
+            font-size: 0.75rem;
+            color: rgba(255,255,255,0.5);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .tracking-stats {
+            display: flex;
+            gap: 16px;
+            flex-shrink: 0;
+        }
+        .tracking-stat {
+            text-align: center;
+        }
+        .tracking-stat-value {
+            font-size: 1.1rem;
+            font-weight: 800;
+            color: #f9d423;
+            display: block;
+        }
+        .tracking-stat-label {
+            font-size: 0.65rem;
+            color: rgba(255,255,255,0.4);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .tracking-live-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 10px;
+            background: rgba(76, 209, 55, 0.15);
+            border: 1px solid rgba(76, 209, 55, 0.3);
+            border-radius: 20px;
+            flex-shrink: 0;
+        }
+        .tracking-live-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #4cd137;
+            animation: liveBlink 1.5s ease-in-out infinite;
+        }
+        @keyframes liveBlink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+        .tracking-live-text {
+            font-size: 0.7rem;
+            font-weight: 700;
+            color: #4cd137;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+    `;
+    document.head.appendChild(style);
+})();
+
+function createTrackingInfoPanel() {
+    if (trackingInfoPanel) trackingInfoPanel.remove();
+    
+    trackingInfoPanel = document.createElement('div');
+    trackingInfoPanel.className = 'tracking-info-panel';
+    trackingInfoPanel.id = 'trackingInfoPanel';
+    trackingInfoPanel.innerHTML = `
+        <div class="tracking-avatar"><i class="fas fa-motorcycle"></i></div>
+        <div class="tracking-details">
+            <span class="tracking-driver-name" id="trackingDriverName">Locating driver...</span>
+            <span class="tracking-status-label" id="trackingStatusLabel">Connecting</span>
+        </div>
+        <div class="tracking-stats">
+            <div class="tracking-stat">
+                <span class="tracking-stat-value" id="trackingETA">--</span>
+                <span class="tracking-stat-label">ETA</span>
+            </div>
+            <div class="tracking-stat">
+                <span class="tracking-stat-value" id="trackingDist">--</span>
+                <span class="tracking-stat-label">Away</span>
+            </div>
+        </div>
+        <div class="tracking-live-badge">
+            <div class="tracking-live-dot"></div>
+            <span class="tracking-live-text">Live</span>
+        </div>
+    `;
+    document.body.appendChild(trackingInfoPanel);
+}
+
+function smoothMoveMarker(marker, targetLatLng, duration) {
+    if (animationFrame) cancelAnimationFrame(animationFrame);
+    
+    const startLatLng = marker.getLatLng();
+    const startTime = performance.now();
+    
+    function animate(currentTime) {
+        const elapsed = currentTime - startTime;
+        const progress = Math.min(elapsed / duration, 1);
+        
+        // Ease-out cubic
+        const eased = 1 - Math.pow(1 - progress, 3);
+        
+        const lat = startLatLng.lat + (targetLatLng.lat - startLatLng.lat) * eased;
+        const lng = startLatLng.lng + (targetLatLng.lng - startLatLng.lng) * eased;
+        
+        marker.setLatLng([lat, lng]);
+        
+        if (progress < 1) {
+            animationFrame = requestAnimationFrame(animate);
+        }
+    }
+    
+    animationFrame = requestAnimationFrame(animate);
+}
+
+function updateTrackingRoute(driverLatLng, destinationLatLng, status) {
+    if (driverRouteLine) map.removeLayer(driverRouteLine);
+    
+    driverRouteLine = L.polyline([driverLatLng, destinationLatLng], {
+        color: status === 'accepted' ? '#4cd137' : '#f9d423',
+        weight: 4,
+        opacity: 0.8,
+        dashArray: '12, 8',
+        lineCap: 'round',
+        lineJoin: 'round'
+    }).addTo(map);
+}
+
+function updateTrackingPanel(driverData, bookingData) {
+    const driverLatLng = L.latLng(driverData.lat, driverData.lng);
+    
+    // Determine destination based on status
+    let destLatLng;
+    let statusLabel;
+    if (bookingData.status === 'accepted') {
+        destLatLng = L.latLng(bookingData.pickup_lat, bookingData.pickup_lng);
+        statusLabel = 'Heading to pickup';
+    } else {
+        destLatLng = L.latLng(bookingData.dropoff_lat, bookingData.dropoff_lng);
+        statusLabel = 'Trip in progress';
+    }
+    
+    const distMeters = map.distance(driverLatLng, destLatLng);
+    const distKm = distMeters / 1000;
+    const etaMins = Math.max(1, Math.round(distMeters / 200)); // ~12km/h avg speed for tricycle
+    
+    const nameEl = document.getElementById('trackingDriverName');
+    const statusEl = document.getElementById('trackingStatusLabel');
+    const etaEl = document.getElementById('trackingETA');
+    const distEl = document.getElementById('trackingDist');
+    
+    if (nameEl) nameEl.textContent = `${driverData.name} • ${driverData.plate_number || 'No Plate'}`;
+    if (statusEl) statusEl.textContent = statusLabel;
+    if (etaEl) etaEl.textContent = `${etaMins}m`;
+    if (distEl) distEl.textContent = distKm < 1 ? `${Math.round(distMeters)}m` : `${distKm.toFixed(1)}km`;
+    
+    // Update route line
+    updateTrackingRoute(driverLatLng, destLatLng, bookingData.status);
+}
+
+function startDriverTracking() {
+    if (driverTrackingInterval) return; // Already tracking
+    
+    createTrackingInfoPanel();
+    let firstUpdate = true;
+    
+    async function pollDriverLocation() {
+        try {
+            const res = await fetch('/GetafeGRAB/rider/api/driver/get_location.php');
+            const data = await res.json();
+            
+            if (data.success && data.driver) {
+                const driverLatLng = L.latLng(data.driver.lat, data.driver.lng);
+                
+                if (!driverTrackingMarker) {
+                    // Create tracking marker on first position
+                    driverTrackingMarker = L.marker(driverLatLng, {
+                        icon: driverTrackingIcon,
+                        zIndexOffset: 1000
+                    }).addTo(map);
+                    
+                    if (firstUpdate) {
+                        // Fit map to show both driver and pickup/dropoff
+                        const bounds = L.latLngBounds([driverLatLng]);
+                        if (pickupCoords) bounds.extend(pickupCoords);
+                        if (dropoffCoords) bounds.extend(dropoffCoords);
+                        map.fitBounds(bounds, { padding: [60, 60] });
+                        firstUpdate = false;
+                    }
+                } else {
+                    // Smooth animate to new position
+                    smoothMoveMarker(driverTrackingMarker, driverLatLng, 2500);
+                }
+                
+                lastDriverLatLng = driverLatLng;
+                updateTrackingPanel(data.driver, data.booking);
+            }
+        } catch (err) {
+            console.error('Driver tracking error:', err);
+        }
+    }
+    
+    // First poll immediately
+    pollDriverLocation();
+    // Then every 3 seconds
+    driverTrackingInterval = setInterval(pollDriverLocation, 3000);
+}
+
+function stopDriverTracking() {
+    if (driverTrackingInterval) {
+        clearInterval(driverTrackingInterval);
+        driverTrackingInterval = null;
+    }
+    if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+    }
+    if (driverTrackingMarker) {
+        map.removeLayer(driverTrackingMarker);
+        driverTrackingMarker = null;
+    }
+    if (driverRouteLine) {
+        map.removeLayer(driverRouteLine);
+        driverRouteLine = null;
+    }
+    if (trackingInfoPanel) {
+        trackingInfoPanel.remove();
+        trackingInfoPanel = null;
+    }
+    lastDriverLatLng = null;
+}

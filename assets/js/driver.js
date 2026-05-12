@@ -2,6 +2,8 @@ let currentBooking = null;
 let map, driverMarker;
 let jobMarkers = [];
 let isOnline = false;
+let locationWatchId = null;
+let locationUpdateTimer = null;
 
 // Initialize Map
 function initMap() {
@@ -117,10 +119,12 @@ document.getElementById('onlineToggle').addEventListener('change', async functio
         } else {
             updateServerStatus(true, 10.1458, 124.1504);
         }
+        startLocationTracking();
         fetchRequests();
     } else {
         statusBox.classList.remove('online');
         statusText.innerText = 'Go Online';
+        stopLocationTracking();
         updateServerStatus(false);
         document.getElementById('rideRequestsList').innerHTML = '<div class="loading-spinner">You are offline.</div>';
         jobMarkers.forEach(m => map.removeLayer(m));
@@ -165,3 +169,52 @@ initMap();
 fetchStats();
 setInterval(fetchRequests, 5000);
 setInterval(fetchStats, 30000);
+
+// ===== Real-Time GPS Location Tracking =====
+function startLocationTracking() {
+    if (!navigator.geolocation) {
+        console.warn('Geolocation not supported');
+        return;
+    }
+
+    // Watch position for smooth local marker updates
+    locationWatchId = navigator.geolocation.watchPosition(
+        (pos) => {
+            const lat = pos.coords.latitude;
+            const lng = pos.coords.longitude;
+            if (driverMarker) {
+                driverMarker.setLatLng([lat, lng]);
+            }
+        },
+        (err) => console.warn('GPS watch error:', err),
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
+    );
+
+    // Push location to server every 3 seconds
+    locationUpdateTimer = setInterval(() => {
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                const data = new FormData();
+                data.append('lat', pos.coords.latitude);
+                data.append('lng', pos.coords.longitude);
+                fetch('/GetafeGRAB/rider/api/driver/update_location.php', {
+                    method: 'POST',
+                    body: data
+                }).catch(err => console.error('Location push error:', err));
+            },
+            (err) => console.warn('GPS error:', err),
+            { enableHighAccuracy: true, maximumAge: 3000, timeout: 5000 }
+        );
+    }, 3000);
+}
+
+function stopLocationTracking() {
+    if (locationWatchId !== null) {
+        navigator.geolocation.clearWatch(locationWatchId);
+        locationWatchId = null;
+    }
+    if (locationUpdateTimer !== null) {
+        clearInterval(locationUpdateTimer);
+        locationUpdateTimer = null;
+    }
+}
