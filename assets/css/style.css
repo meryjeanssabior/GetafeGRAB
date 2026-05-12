@@ -1,0 +1,68 @@
+:root {
+    --primary: #f9d423;
+    --secondary: #ff4e50;
+    --dark: #1a1a1a;
+    --light: #ffffff;
+    --glass: rgba(255, 255, 255, 0.05);
+    --glass-border: rgba(255, 255, 255, 0.1);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Outfit', sans-serif;
+}
+
+body {
+    background: #121212;
+    color: var(--light);
+}
+
+.glass-card {
+    background: var(--glass);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--glass-border);
+    border-radius: 20px;
+}
+
+.btn-primary {
+    background: linear-gradient(90deg, var(--primary), #fbc531);
+    color: var(--dark);
+    border: none;
+    padding: 0.8rem 1.5rem;
+    border-radius: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(249, 212, 35, 0.3);
+}
+
+.input-group {
+    margin-bottom: 1rem;
+}
+
+.input-group label {
+    display: block;
+    margin-bottom: 0.4rem;
+    font-size: 0.85rem;
+    color: rgba(255,255,255,0.6);
+}
+
+.input-group input {
+    width: 100%;
+    padding: 0.7rem 1rem;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid var(--glass-border);
+    border-radius: 10px;
+    color: var(--light);
+    outline: none;
+}
+
+.input-group input:focus {
+    border-color: var(--primary);
+}
